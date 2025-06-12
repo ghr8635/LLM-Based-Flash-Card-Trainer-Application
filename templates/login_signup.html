@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="../static/styles.css" />
+    <title>Login</title>
+</head>
+<body>
+    <!-- Flash messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <ul class="flashes">
+                {% for category, message in messages %}
+                    <li class="{{ category }}">{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
+    <!-- Login and Signup forms -->
+    <div class="container" id="container">
+        <div class="form-container sign-up">
+            <form class="auth-form" action="/" method="post">
+                <h2>Sign Up</h2>
+                <input type="text" id="fullname" name="fullname" required placeholder="Full Name">
+                <input type="email" id="email" name="email" required class="email" placeholder="Email">
+                <input type="password" id="password" name="password" required placeholder="Password">
+                <button type="submit" class="signup-button" name="signup">Register</button>
+            </form>
+        </div>
+        <div class="form-container sign-in">
+            <form class="auth-form" action="/" method="post">
+                <h2>Login</h2>
+                <input type="email" id="email" name="email" required placeholder="Email">
+                <input type="password" id="password" name="password" required placeholder="Password">
+                <button type="submit" class="signup-button" name="login">Login</button>
+            </form>
+        </div>
+        <div class="toggle-container">
+            <div class="toggle">
+                <div class="toggle-panel toggle-left">
+                    <h1>Welcome Back!</h1>
+                    <p>Enter your personal details to get registered</p>
+                    <button class="hidden" id="login">Sign In</button>
+                </div>
+                <div class="toggle-panel toggle-right">
+                    <h1>Hello, Friend!</h1>
+                    <p>Welcome to our German-to-English flashcard trainer. Log in to elevate your vocabulary skills today!</p>
+                    <button class="hidden" id="register">Sign Up</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const container = document.getElementById('container');
+        const registerBtn = document.getElementById('register');
+        const loginBtn = document.getElementById('login');
+
+        registerBtn.addEventListener('click', () => {
+            container.classList.add("active");
+        });
+
+        loginBtn.addEventListener('click', () => {
+            container.classList.remove("active");
+        });
+    </script>
+</body>
+</html>

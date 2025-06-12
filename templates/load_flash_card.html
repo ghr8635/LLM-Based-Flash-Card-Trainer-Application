@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flashcard</title>
+    <link rel="stylesheet" href="../static/styles.css">
+
+    <!-- Bootstrap CSS (for modal styles) -->
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+
+    <!-- jQuery -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+
+    <!-- Bootstrap JS (for modal functionality) -->
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+
+
+</head>
+<body>
+    <div class="flashcard-container-wrapper">
+        <div class="header-wrapper">
+            <div id="score">Score: 0/0</div>
+            <div id="time">Time: 00:00:00</div>
+            <button id="logout" onclick="logout()">Logout</button>
+        </div>
+    
+        <div id="flashcard-container">
+            <div id="question-box">Question</div>
+            <input type="text" id="answer-box" placeholder="Your answer">
+            <div id="response-box"></div>
+            <div id="buttons">
+                <button class="btn-hint" id="hint" onclick="showHint()">Hint</button>
+                <button class="btn-submit" id="submit" onclick="submitAnswer()">Submit</button>
+                <button class="btn-next" id="next" onclick="loadFlashcard()">Next</button>
+                <button class="btn-history" id="history" onclick="viewHistory()">History</button>
+                <button class="btn-stop" id="stop" onclick="stopGame()">Stop</button>
+                <button class="btn-restart" id="restart" onclick="restartGame()" disabled>Restart</button>
+            </div>
+        </div>
+    
+        <div class="popup" id="popup">
+            <div class="text-wrapper-white">
+                <p class="popup-text" id="popup-text">Score: 0%</p>
+                <button class="popup-button" onclick="closePopup()">OK</button>
+            </div>
+        </div>
+        
+        <!-- Bootstrap Modal -->
+        <div class="modal" id="historyModal" tabindex="-1" role="dialog">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">History</h5>
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                    <div class="modal-body" id="historyModalBody">
+                        <!-- History content will be dynamically inserted here -->
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+  
+    <script>
+        // JavaScript functions (place them in a separate script.js file if preferred)
+        
+        let startTime = new Date();
+        let timerId;
+        let correctAnswers = 0;
+        let totalAttempts = 0;
+        let timerStopped = false;  // Variable to track if timer is stopped
+
+        function updateTime() {
+            const now = new Date();
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            document.getElementById('time').innerText = `Time: ${hours}:${minutes}:${seconds}`;
+        }
+
+        function startTimer() {
+            startTime = Date.now(); // Record the start time
+
+            function updateElapsedTime() {
+                const elapsedTime = Date.now() - startTime;
+                const hours = Math.floor(elapsedTime / 3600000);
+                const minutes = Math.floor((elapsedTime % 3600000) / 60000);
+                const seconds = Math.floor((elapsedTime % 60000) / 1000);
+
+                document.getElementById('time').innerText = `Time: ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+                timerId = requestAnimationFrame(updateElapsedTime);
+            }
+
+            updateElapsedTime();
+        }
+
+        function stopTimer() {
+            cancelAnimationFrame(timerId);
+        }
+
+        function resetTimer() {
+            startTime = Date.now();
+            const hours = String(0).padStart(2, '0');
+            const minutes = String(0).padStart(2, '0');
+            const seconds = String(0).padStart(2, '0');
+            document.getElementById('time').innerText = `Time: ${hours}:${minutes}:${seconds}`;
+        }
+
+        function enableButtons() {
+            document.getElementById('hint').disabled = false;
+            document.getElementById('submit').disabled = false;
+            document.getElementById('next').disabled = false;
+            document.getElementById('history').disabled = false;
+            document.getElementById('stop').disabled = false;
+        }
+
+        function loadFlashcard() {
+            // Enable hint and submit buttons
+            document.getElementById('hint').disabled = false;
+            document.getElementById('submit').disabled = false;
+
+            fetch('/get_flashcard')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(data.error);
+                    } else {
+                        document.getElementById('question-box').innerText = data.question;
+                        document.getElementById('response-box').innerText = '';
+                        document.getElementById('answer-box').value = '';
+                    }
+                });
+        }
+
+        function submitAnswer() {
+            // Disable hint and submit buttons after submission
+            document.getElementById('hint').disabled = true;
+            document.getElementById('submit').disabled = true;
+
+            const userAnswer = document.getElementById('answer-box').value;
+            const question = document.getElementById('question-box').innerText;
+            fetch('/submit_answer', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ question, userAnswer })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    const responseBox = document.getElementById('response-box');
+                    if (data.correct) {
+                        correctAnswers++;
+                        responseBox.innerText = 'Correct!';
+                        responseBox.style.color = 'green';
+                    } else {
+                        responseBox.innerText = `Incorrect! The correct answer is ${data.correctAnswer}`;
+                        responseBox.style.color = 'red';
+                    }
+                    totalAttempts++;
+                    updateScore();
+                });
+        }
+
+        function showHint() {
+            // Disable hint button until next button is clicked
+            document.getElementById('hint').disabled = true;
+
+            const question = document.getElementById('question-box').innerText;
+            fetch('/get_hint', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ question })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('response-box').innerText = `Hint: ${data.hint}`;
+                    document.getElementById('response-box').style.color = 'black';
+                });
+        }
+
+        function updateScore() {
+            document.getElementById('score').innerText = `Score: ${correctAnswers}/${totalAttempts}`;
+        }
+
+        function restartGame() {
+            // Reset game state
+            correctAnswers = 0;
+            totalAttempts = 0;
+            updateScore();
+            resetTimer();
+            startTimer();
+            enableButtons(); // Enable all buttons (hint, submit, next, history, stop)
+            loadFlashcard();
+            document.getElementById('restart').disabled = true; // Disable restart button again
+            
+            // Reset timerStopped variable
+            timerStopped = false;
+        }
+
+        function stopGame() {
+            stopTimer();
+            const popup = document.getElementById('popup');
+            const popupText = document.getElementById('popup-text');
+            const scorePercentage = totalAttempts > 0 ? ((correctAnswers / totalAttempts) * 100).toFixed(2) : 0;
+            popupText.innerText = `Score: ${scorePercentage}%`;
+            popup.style.display = 'flex';
+
+            // Disable all buttons except restart after stopping the game
+            document.getElementById('hint').disabled = true;
+            document.getElementById('submit').disabled = true;
+            document.getElementById('next').disabled = true;
+            document.getElementById('history').disabled = true;
+            document.getElementById('stop').disabled = true;
+            document.getElementById('restart').disabled = false; // Enable restart button
+
+            // Save history on stop
+            fetch('/save_history', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ score_percentage: scorePercentage })
+            })
+            .then(response => {
+                if (response.ok) {
+                    console.log('History saved successfully.');
+                } else {
+                    console.error('Failed to save history.');
+                }
+            })
+            .catch(error => {
+                console.error('Error while saving history:', error);
+            });
+        }
+
+        function closePopup() {
+            const popup = document.getElementById('popup');
+            popup.style.display = 'none';
+        }
+        
+        window.onload = function () {
+    startTimer();
+    loadFlashcard();
+};
+
+        function logout() {
+            fetch('/logout')
+                .then(response => {
+                    if (response.ok) {
+                        window.location.href = '/'; // Redirect to the login page or homepage after logout
+                    } else {
+                        console.error('Failed to logout:', response.statusText);
+                        // Handle error if necessary
+                    }
+                })
+                .catch(error => {
+                    console.error('Error during logout:', error);
+                    // Handle error if necessary
+                });
+        }
+
+        function viewHistory() {
+            console.log('Fetching history...');
+            fetch('/view_history')
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Data received:', data);
+                    if (data.history) {
+                        // Display history data in a modal
+                        const historyModalBody = document.getElementById('historyModalBody');
+                        historyModalBody.innerHTML = ''; // Clear previous content
+
+                        data.history.forEach(session => {
+                            const sessionItem = document.createElement('p');
+                            // Check if score is present and not undefined
+                            const score = session.score !== undefined ? `${session.score.toFixed(2)}%` : 'No score available';
+                            sessionItem.textContent = `${session.timestamp} - Score: ${score}`;
+                            historyModalBody.appendChild(sessionItem);
+                        });
+
+                        // Show the Bootstrap modal
+                        $('#historyModal').modal('show');
+                    } else {
+                        console.log('No history found for the user.');
+                        alert('No history found for the user.');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching history:', error);
+                    alert('Error fetching history. Please try again later.');
+                });
+        }
+        window.onload = function () {
+            startTimer();
+            loadFlashcard();
+        };
+
+        window.onbeforeunload = function () {
+    if (!sessionStorage.getItem('loggingOut')) {
+        sessionStorage.clear();  // Clear sessionStorage on logout
+        return 'Your progress will be lost. Are you sure you want to leave?';
+    }
+};
+
+    </script>
+</body>
+</html>
