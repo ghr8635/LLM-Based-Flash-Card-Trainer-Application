@@ -1,0 +1,1 @@
+# LLM-Based-Flash-Card-Trainer-Application
