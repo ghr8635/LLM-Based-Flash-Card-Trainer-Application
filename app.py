@@ -1,25 +1,22 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
+from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+from transformers import pipeline
 import os
 import pytz
-import sqlalchemy
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
 
+# ---------------- APP INIT ----------------
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'
 
-# Database config
-db_path = os.path.join("C:\\Users\\hussa\\OneDrive\\Desktop\\SE Project\\flashcard_app\\flash_card_database.db")
+# ---------------- DATABASE CONFIG ----------------
+db_path = "flash_card_database.db"
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'connect_args': {'check_same_thread': False}}
 db = SQLAlchemy(app)
 
-# Models
+# ---------------- DATABASE MODELS ----------------
 class User(db.Model):
     __tablename__ = 'login_details'
     id = db.Column(db.Integer, primary_key=True)
@@ -34,20 +31,14 @@ class History(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     score = db.Column(db.Float)
 
-# ---------------- LLM LOADING ----------------
-model_id = "meta-llama/Llama-2-7b-chat-hf"
-access_token = "hf_xxx_your_token_here"
-tokenizer = AutoTokenizer.from_pretrained(model_id, use_auth_token=access_token)
-model = AutoModelForCausalLM.from_pretrained(model_id, use_auth_token=access_token, device_map="auto", torch_dtype="auto")
-model.eval()
+# ---------------- LLM MODEL ----------------
+pipe = pipeline("text-generation", model="tiiuae/falcon-rw-1b", trust_remote_code=True)
 
 def generate_llm(prompt, max_new_tokens=50):
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=True, temperature=0.7, top_p=0.95)
-    return tokenizer.decode(output[0], skip_special_tokens=True)
+    result = pipe(prompt, max_new_tokens=max_new_tokens, do_sample=True, temperature=0.7, top_p=0.9)
+    return result[0]["generated_text"]
 
-# ---------------- LLM PROMPTS ----------------
+# ---------------- PROMPTS ----------------
 def few_shot_flashcard_prompt():
     return (
         "You are a German-English vocabulary tutor. Give one German word only. Do not explain or translate.\n\n"
@@ -59,23 +50,32 @@ def few_shot_flashcard_prompt():
 def few_shot_hint_prompt(word):
     return (
         "You are helping learners understand German vocabulary. Give short English hints.\n\n"
-        "Example:\nWord: Hund\nHint: A common pet that barks.\n\n"
-        "Word: Apfel\nHint: A sweet red or green fruit.\n\n"
+        "Word: Hund\nHint: A common pet that barks.\n"
+        "Word: Apfel\nHint: A sweet red or green fruit.\n"
         f"Word: {word}\nHint:"
     )
 
 def few_shot_verify_prompt(word, user_answer, correct_answer):
     return (
         "You are a vocabulary tutor. Accept small spelling mistakes and missing articles.\n\n"
-        "Example:\nWord: Hund\nUser: dog\nCorrect: dog\nResult: Yes\n\n"
-        "Word: Apfel\nUser: a apple\nCorrect: apple\nResult: Yes\n\n"
+        "Word: Hund\nUser: dog\nCorrect: dog\nResult: Yes\n"
+        "Word: Apfel\nUser: a apple\nCorrect: apple\nResult: Yes\n"
         f"Word: {word}\nUser: {user_answer}\nCorrect: {correct_answer}\nResult:"
     )
 
 # ---------------- ROUTES ----------------
 @app.route('/')
 def login_form():
-    return render_template('login_signup.html')
+    return render_template_string('''
+        <h2>Login or Signup</h2>
+        <form method="post">
+            Full Name (Signup): <input name="fullname"><br>
+            Email: <input name="email"><br>
+            Password: <input name="password" type="password"><br>
+            <button name="signup" type="submit">Signup</button>
+            <button name="login" type="submit">Login</button>
+        </form>
+    ''')
 
 @app.route('/', methods=['POST'])
 def login_signup():
@@ -88,98 +88,77 @@ def login_signup():
             new_user = User(fullname=fullname, email=email, password=hashed)
             db.session.add(new_user)
             db.session.commit()
-            flash('Signup successful! Please log in.', 'success')
-        except sqlalchemy.exc.SQLAlchemyError as e:
+            return redirect(url_for('login_form'))
+        except:
             db.session.rollback()
-            flash(f'Signup failed: {str(e)}', 'error')
-        return redirect(url_for('login_form'))
-
+            return "Signup failed."
     elif 'login' in request.form:
         email = request.form['email']
         password = request.form['password']
         user = User.query.filter_by(email=email).first()
-        if not user:
-            flash('User does not exist.', 'error')
-            return redirect(url_for('login_form'))
-        if check_password_hash(user.password, password):
-            session['user_id'] = user.id
-            session['fullname'] = user.fullname
-            session['email'] = user.email
-            flash('Login successful!', 'success')
-            return redirect(url_for('load_flashcards'))
-        else:
-            flash('Invalid credentials.', 'error')
-            return redirect(url_for('login_form'))
+        if not user or not check_password_hash(user.password, password):
+            return "Login failed."
+        session['user_id'] = user.id
+        session['fullname'] = user.fullname
+        session['email'] = user.email
+        return redirect(url_for('load_flashcards'))
 
-@app.route('/logout', methods=['GET'])
+@app.route('/logout')
 def logout():
     session.clear()
-    flash('Logged out.', 'info')
     return redirect(url_for('login_form'))
 
 @app.route('/load_flashcards')
 def load_flashcards():
     if 'email' in session:
-        return render_template('load_flash_card.html')
-    flash('Please log in.', 'error')
+        return render_template_string('''
+            <h3>Flashcard Trainer</h3>
+            <button onclick="fetchWord()">New Word</button>
+            <p id="question">Question:</p>
+            <input id="user_input"><button onclick="verify()">Check</button>
+            <p id="hint"></p>
+            <script>
+                let currentWord = "";
+                async function fetchWord() {
+                    const res = await fetch("/generate_flashcard");
+                    const data = await res.json();
+                    currentWord = data.question;
+                    document.getElementById("question").innerText = "Question: " + currentWord;
+                }
+                async function verify() {
+                    const user = document.getElementById("user_input").value;
+                    const res = await fetch("/verify_answer", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({question: currentWord, user_answer: user, correct_answer: currentWord})
+                    });
+                    const data = await res.json();
+                    alert(data.correct ? "Correct!" : "Try again. " + data.response);
+                }
+            </script>
+        ''')
     return redirect(url_for('login_form'))
 
-@app.route('/generate_flashcard', methods=['GET'])
+@app.route('/generate_flashcard')
 def generate_flashcard():
     prompt = few_shot_flashcard_prompt()
     response = generate_llm(prompt, max_new_tokens=10)
     word = response.strip().split("German:")[-1].strip().split("\n")[0]
     return jsonify({"question": word})
 
-@app.route('/get_hint', methods=['POST'])
-def get_hint():
-    data = request.get_json()
-    word = data.get("question", "")
-    prompt = few_shot_hint_prompt(word)
-    response = generate_llm(prompt)
-    return jsonify({"hint": response.strip().split("Hint:")[-1].strip()})
-
 @app.route('/verify_answer', methods=['POST'])
 def verify_answer():
     data = request.get_json()
     word = data.get("question")
     user_answer = data.get("user_answer")
-    correct_translation = data.get("correct_answer", word)  # placeholder match
-
+    correct_translation = data.get("correct_answer", word)
     prompt = few_shot_verify_prompt(word, user_answer, correct_translation)
     response = generate_llm(prompt)
     verdict = "yes" in response.lower()
     return jsonify({"correct": verdict, "response": response.strip()})
 
-@app.route('/save_history', methods=['POST'])
-def save_history():
-    data = request.get_json()
-    score = data.get('score_percentage')
-    email = session.get('email')
-    if not email or score is None:
-        return jsonify({'error': 'Missing info.'}), 400
-    try:
-        new_entry = History(email=email, score=score, timestamp=datetime.utcnow())
-        db.session.add(new_entry)
-        db.session.commit()
-        return jsonify({'message': 'Saved.'}), 200
-    except:
-        db.session.rollback()
-        return jsonify({'error': 'DB error'}), 500
-
-@app.route('/view_history')
-def view_history():
-    email = session.get('email')
-    if not email:
-        return jsonify({'error': 'Not logged in'})
-    sessions = History.query.filter_by(email=email).order_by(History.timestamp.desc()).limit(10).all()
-    tz = pytz.timezone('Europe/Berlin')
-    return jsonify({
-        'history': [{
-            'timestamp': s.timestamp.astimezone(tz).strftime('%Y-%m-%d %H:%M:%S'),
-            'score': float(s.score)
-        } for s in sessions]
-    })
-
+# ---------------- MAIN ----------------
 if __name__ == '__main__':
-    app.run(debug=True)
+    with app.app_context():
+        db.create_all()  # Ensures tables are created
+    app.run()
