@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
@@ -31,14 +31,7 @@ class History(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     score = db.Column(db.Float)
 
-# ---------------- LLM MODEL ----------------
-pipe = pipeline("text-generation", model="tiiuae/falcon-rw-1b", trust_remote_code=True)
-
-def generate_llm(prompt, max_new_tokens=50):
-    result = pipe(prompt, max_new_tokens=max_new_tokens, do_sample=True, temperature=0.7, top_p=0.9)
-    return result[0]["generated_text"]
-
-# ---------------- PROMPTS ----------------
+# ---------------- PROMPT GENERATORS ----------------
 def few_shot_flashcard_prompt():
     return (
         "You are a German-English vocabulary tutor. Give one German word only. Do not explain or translate.\n\n"
@@ -66,16 +59,7 @@ def few_shot_verify_prompt(word, user_answer, correct_answer):
 # ---------------- ROUTES ----------------
 @app.route('/')
 def login_form():
-    return render_template_string('''
-        <h2>Login or Signup</h2>
-        <form method="post">
-            Full Name (Signup): <input name="fullname"><br>
-            Email: <input name="email"><br>
-            Password: <input name="password" type="password"><br>
-            <button name="signup" type="submit">Signup</button>
-            <button name="login" type="submit">Login</button>
-        </form>
-    ''')
+    return render_template("login_signup.html")
 
 @app.route('/', methods=['POST'])
 def login_signup():
@@ -88,16 +72,19 @@ def login_signup():
             new_user = User(fullname=fullname, email=email, password=hashed)
             db.session.add(new_user)
             db.session.commit()
-            return redirect(url_for('login_form'))
+            flash("Signup successful. Please login.", "success")
         except:
             db.session.rollback()
-            return "Signup failed."
+            flash("Signup failed. Email might already be registered.", "error")
+        return redirect(url_for('login_form'))
+
     elif 'login' in request.form:
         email = request.form['email']
         password = request.form['password']
         user = User.query.filter_by(email=email).first()
         if not user or not check_password_hash(user.password, password):
-            return "Login failed."
+            flash("Invalid credentials", "error")
+            return redirect(url_for('login_form'))
         session['user_id'] = user.id
         session['fullname'] = user.fullname
         session['email'] = user.email
@@ -111,32 +98,7 @@ def logout():
 @app.route('/load_flashcards')
 def load_flashcards():
     if 'email' in session:
-        return render_template_string('''
-            <h3>Flashcard Trainer</h3>
-            <button onclick="fetchWord()">New Word</button>
-            <p id="question">Question:</p>
-            <input id="user_input"><button onclick="verify()">Check</button>
-            <p id="hint"></p>
-            <script>
-                let currentWord = "";
-                async function fetchWord() {
-                    const res = await fetch("/generate_flashcard");
-                    const data = await res.json();
-                    currentWord = data.question;
-                    document.getElementById("question").innerText = "Question: " + currentWord;
-                }
-                async function verify() {
-                    const user = document.getElementById("user_input").value;
-                    const res = await fetch("/verify_answer", {
-                        method: "POST",
-                        headers: {"Content-Type": "application/json"},
-                        body: JSON.stringify({question: currentWord, user_answer: user, correct_answer: currentWord})
-                    });
-                    const data = await res.json();
-                    alert(data.correct ? "Correct!" : "Try again. " + data.response);
-                }
-            </script>
-        ''')
+        return render_template("load_flash_card.html")
     return redirect(url_for('login_form'))
 
 @app.route('/generate_flashcard')
@@ -145,6 +107,14 @@ def generate_flashcard():
     response = generate_llm(prompt, max_new_tokens=10)
     word = response.strip().split("German:")[-1].strip().split("\n")[0]
     return jsonify({"question": word})
+
+@app.route('/get_hint', methods=['POST'])
+def get_hint():
+    data = request.get_json()
+    word = data.get("question", "")
+    prompt = few_shot_hint_prompt(word)
+    response = generate_llm(prompt)
+    return jsonify({"hint": response.strip().split("Hint:")[-1].strip()})
 
 @app.route('/verify_answer', methods=['POST'])
 def verify_answer():
@@ -157,8 +127,51 @@ def verify_answer():
     verdict = "yes" in response.lower()
     return jsonify({"correct": verdict, "response": response.strip()})
 
-# ---------------- MAIN ----------------
+@app.route('/save_history', methods=['POST'])
+def save_history():
+    data = request.get_json()
+    score = data.get('score_percentage')
+    email = session.get('email')
+    if not email or score is None:
+        return jsonify({'error': 'Missing info'}), 400
+    try:
+        new_entry = History(email=email, score=score, timestamp=datetime.utcnow())
+        db.session.add(new_entry)
+        db.session.commit()
+        return jsonify({'message': 'Saved'}), 200
+    except:
+        db.session.rollback()
+        return jsonify({'error': 'DB error'}), 500
+
+@app.route('/view_history')
+def view_history():
+    email = session.get('email')
+    if not email:
+        return jsonify({'error': 'Not logged in'}), 401
+    sessions = History.query.filter_by(email=email).order_by(History.timestamp.desc()).limit(10).all()
+    tz = pytz.timezone('Europe/Berlin')
+    return jsonify({
+        'history': [{
+            'timestamp': s.timestamp.astimezone(tz).strftime('%Y-%m-%d %H:%M:%S'),
+            'score': float(s.score)
+        } for s in sessions]
+    })
+
+# ---------------- ENTRY POINT ----------------
 if __name__ == '__main__':
+    from multiprocessing import freeze_support
+    freeze_support()
+
+    print("Device set to use cpu")
+
+    # Load the Falcon model pipeline
+    pipe = pipeline("text-generation", model="tiiuae/falcon-rw-1b", trust_remote_code=True)
+
+    def generate_llm(prompt, max_new_tokens=50):
+        result = pipe(prompt, max_new_tokens=max_new_tokens, do_sample=True, temperature=0.7, top_p=0.9)
+        return result[0]["generated_text"]
+
     with app.app_context():
-        db.create_all()  # Ensures tables are created
+        db.create_all()
+
     app.run()
