@@ -1,9 +1,9 @@
 # Web-Browser-Based-Flash-Card-Trainer
 LLM-Powered German-English Flashcard App
-This application is an intelligent vocabulary training tool that helps users improve their German-to-English language skills in an interactive way. A key innovation in this app is the integration of LLaMA 2, an open-source Large Language Model (LLM), using few-shot prompt engineering. This replaces the need for a static flashcard database.
+This application is an intelligent vocabulary training tool that helps users improve their German-to-English language skills in an interactive way. A key innovation in this app is the integration of a light weight open-source Large Language Model (LLM), using few-shot prompt engineering. This replaces the need for a static flashcard database.
 
 **Description**
-The app dynamically generates German words using LLaMA 2 instead of relying on pre-saved cards. Users are prompted to enter the English translation. If needed, the model provides a short hint in English. When the user submits their answer, the model verifies its correctness, allowing for small spelling errors and missing articles.
+The app dynamically generates German words using LLM instead of relying on pre-saved cards. Users are prompted to enter the English translation. If needed, the model provides a short hint in English. When the user submits their answer, the model verifies its correctness, allowing for small spelling errors and missing articles.
 
 **Features**
 1. Dynamic generation of German words using a language model
